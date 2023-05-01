@@ -1,0 +1,139 @@
+#!/bin/bash
+
+#
+# Prepare environment
+#
+
+# Exit immediately if any command fails
+set -e
+
+# Ensure we have elevated permissions
+if [ "$(whoami)" != "root" ]; then
+    echo -e "\nArch updater needs to run with root permissions\n" >&2
+    exit 1
+fi
+
+
+#
+# Load configuration
+#
+
+# Load configuration file
+ARCHUPDATER_CONFIG_RAW="$(cat "$(dirname $0)/archupdater.conf")"
+
+archupdater_get_config_value()
+{
+    local WS="[[:space:]]*"
+    echo "$(sed -En "/^$WS$1$WS=$WS/ { s/^$WS$1$WS=$WS//; s/$WS\$//; p }" <<< "$ARCHUPDATER_CONFIG_RAW")"
+}
+archupdater_get_config_value_nonempty()
+{
+    local VAL="$(archupdater_get_config_value "$1")"
+    if [ -n "$VAL" ]; then
+        echo "$VAL"
+    else
+        echo "Required configuration value not found: $1" >&2
+        exit 1
+    fi
+}
+
+# Get required bootloader update command
+ARCHUPDATER_BOOTLOADER_UPDATE_COMMAND="$(archupdater_get_config_value_nonempty ARCHUPDATER_BOOTLOADER_UPDATE_COMMAND)"
+
+# Get bootloader install trigger package list
+ARCHUPDATER_BOOTLOADER_INSTALL_TRIGGER_PACKAGE_LIST="$(archupdater_get_config_value ARCHUPDATER_BOOTLOADER_INSTALL_TRIGGER_PACKAGE_LIST)"
+
+# Get bootloader install command if trigger package list is not empty
+if [ -n "$ARCHUPDATER_BOOTLOADER_INSTALL_TRIGGER_PACKAGE_LIST" ]; then
+    ARCHUPDATER_BOOTLOADER_INSTALL_COMMAND="$(archupdater_get_config_value_nonempty ARCHUPDATER_BOOTLOADER_INSTALL_COMMAND)"
+else
+    ARCHUPDATER_BOOTLOADER_INSTALL_COMMAND=
+fi
+
+# Get package ignore list
+ARCHUPDATER_PACKAGE_IGNORE_LIST="$(archupdater_get_config_value ARCHUPDATER_PACKAGE_IGNORE_LIST)"
+
+# Get package ignore group list
+ARCHUPDATER_PACKAGE_IGNOREGROUP_LIST="$(archupdater_get_config_value ARCHUPDATER_PACKAGE_IGNOREGROUP_LIST)"
+
+# Clear configuration value
+ARCHUPDATER_CONFIG_RAW=
+
+
+#
+# Prepare for upgrade
+#
+
+archupdater_request_proceed_action()
+{
+    echo -n "Press enter to proceed or CTRL+C to exit..."
+    read
+}
+
+# Print info and request user action
+ARCHUPDATER_DATABASE_UPDATE_COMMAND="pacman -Syy"
+echo -e "\nPackage database needs to be updated with command:\n    \$ $ARCHUPDATER_DATABASE_UPDATE_COMMAND\n"
+archupdater_request_proceed_action
+echo ""
+
+# Refresh all package databases
+eval "$ARCHUPDATER_DATABASE_UPDATE_COMMAND"
+
+# Get a list of packages to be upgraded
+ARCHUPDATER_PACKAGE_UPGRADE_LIST="$(pacman -Qu)"
+
+archupdater_list_to_regex_group()
+{
+    if [ -n "$@" ]; then
+        echo "($(sed -E "s/[[:space:]]+/|/g" <<< "$@"))"
+    fi
+}
+
+# Remove ignored packages from the list
+ARCHUPDATER_PACKAGE_UPGRADE_LIST="$(sed -E "/^$(archupdater_list_to_regex_group "$ARCHUPDATER_PACKAGE_IGNORE_LIST")[[:space:]]+/ { d }" <<< "$ARCHUPDATER_PACKAGE_UPGRADE_LIST")"
+
+# Prepare upgrade command
+archupdater_append_upgrade_command_with_ignore_list()
+{
+    local WS="[[:space:]]"
+    local IGNORE_ARG_NAME=$1
+    shift
+    local IGNORE_LIST="$(sed -E "s/^$WS*//; s/$WS*\$//; s/$WS+/,/g" <<< "$@")"
+    if [ -n "$IGNORE_LIST" ]; then
+        ARCHUPDATER_UPGRADE_COMMAND="$ARCHUPDATER_UPGRADE_COMMAND --$IGNORE_ARG_NAME=$IGNORE_LIST"
+    fi
+}
+ARCHUPDATER_UPGRADE_COMMAND="pacman -Su"
+archupdater_append_upgrade_command_with_ignore_list "ignore" $ARCHUPDATER_PACKAGE_IGNORE_LIST
+archupdater_append_upgrade_command_with_ignore_list "ignoregroup" $ARCHUPDATER_PACKAGE_IGNOREGROUP_LIST
+
+# Prepare post-upgrade command (check if any bootloader command has to be invoked)
+archupdater_get_from_package_upgrade_list()
+{
+    if [ -n "$1" ]; then
+        echo "$(sed -En "/^$1[[:space:]]+/ { p }" <<< "$ARCHUPDATER_PACKAGE_UPGRADE_LIST")"
+    fi
+}
+if   [ -n "$(archupdater_get_from_package_upgrade_list "$(archupdater_list_to_regex_group "$ARCHUPDATER_BOOTLOADER_INSTALL_TRIGGER_PACKAGE_LIST")")" ]; then
+    # One or more packages specified in ARCHUPDATER_BOOTLOADER_INSTALL_TRIGGER_PACKAGE_LIST is to be upgraded; we need to (re)install and update bootloader
+    ARCHUPDATER_POST_UPGRADE_COMMAND="$ARCHUPDATER_BOOTLOADER_INSTALL_COMMAND && $ARCHUPDATER_BOOTLOADER_UPDATE_COMMAND"
+elif [ -n "$(archupdater_get_from_package_upgrade_list "linux[[:alnum:]-]*")" ]; then
+    # One or more linux kernel packages is to be upgraded; we need to update bootloader
+    ARCHUPDATER_POST_UPGRADE_COMMAND="$ARCHUPDATER_BOOTLOADER_UPDATE_COMMAND"
+else
+    # No post-upgrade command needed
+    ARCHUPDATER_POST_UPGRADE_COMMAND=
+fi
+
+# Print info and request user action
+echo -e "\nUpgrade procedure is ready with following commands:\nUpgrade command:\n    \$ $ARCHUPDATER_UPGRADE_COMMAND\nPost-upgrade command:\n    \$ $ARCHUPDATER_POST_UPGRADE_COMMAND\n"
+archupdater_request_proceed_action
+echo ""
+
+
+#
+# Run upgrade commands
+#
+
+eval "$ARCHUPDATER_UPGRADE_COMMAND"
+eval "$ARCHUPDATER_POST_UPGRADE_COMMAND"

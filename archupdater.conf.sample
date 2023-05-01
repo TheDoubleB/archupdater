@@ -1,0 +1,33 @@
+# Arch updater configuration file
+
+# Ignore package list; (white)space-delimited
+# This list is passed to `pacman -S` in the form of: --ignore=pkg1,pkg2,pkg3,...
+# If this list is empty or commented out, --ignore argument is ommitted
+# Presence: Optional
+# Example:  linux-lts linux-lts-headers
+ARCHUPDATER_PACKAGE_IGNORE_LIST =
+
+# Ignore package group list; (white)space-delimited
+# This list is passed to `pacman -S` in the form of: --ignoregroup=pkg1,pkg2,pkg3,...
+# If this list is empty or commented out, --ignoregroup argument is ommitted
+# Presence: Optional
+# Example:  kde-applications
+ARCHUPDATER_PACKAGE_IGNOREGROUP_LIST =
+
+# Bootloader update command
+# This command will be invoked when linux kernel package(s) are updated
+# If no kernel package was updated (either none was available or all were on ignore list), this command is not invoked
+# Presence: Required
+# Example:  grub-mkconfig -o /boot/grub/grub.cfg
+ARCHUPDATER_BOOTLOADER_UPDATE_COMMAND = grub-mkconfig -o /boot/grub/grub.cfg
+
+# Bootloader (re)install command
+# This command will be invoked when at least one package specified in ARCHUPDATER_BOOTLOADER_INSTALL_TRIGGER_PACKAGE_LIST is updated
+# Presence: Required if ARCHUPDATER_BOOTLOADER_INSTALL_TRIGGER_PACKAGE_LIST is present and not empty
+# Example:  grub-install --target=x86_64-efi --efi-directory=/boot --bootloader-id=GRUB
+ARCHUPDATER_BOOTLOADER_INSTALL_COMMAND = grub-install --target=x86_64-efi --efi-directory=/boot --bootloader-id=GRUB
+
+# List of packages that will trigger bootloader reinstall; (white)space-delimited
+# Presence: Optional
+# Example:  grub efibootmgr
+ARCHUPDATER_BOOTLOADER_INSTALL_TRIGGER_PACKAGE_LIST = grub efibootmgr
